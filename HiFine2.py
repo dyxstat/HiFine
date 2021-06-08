@@ -1,0 +1,238 @@
+#########The structure of the main script is modified from bin3C########
+from Binning_refiner import FindShare
+from Cluster import ClusterBin
+from utils import load_object,save_object,bin_evaluation,make_dir
+from Merge import merge,assign
+import logging
+import sys
+import argparse
+import os
+import time
+import warnings
+import pandas as pd
+
+##Ignore the warning information of package deprecation##
+warnings.filterwarnings("ignore")
+
+__version__ = '1.0, released at 06/2021'
+
+if __name__ == '__main__':
+    
+    def mk_version():
+        return 'HiFine v{}'.format(__version__)
+
+    def out_name(base, suffix):
+        return '{}{}'.format(base, suffix)
+
+    def ifelse(arg, default):
+        if arg is None:
+            return default
+        else:
+            return arg
+
+    runtime_defaults = {
+        'alpha': 0.7,
+        'beta': 0.3,
+        'min_binsize': 500000,
+        'min_complete': 500000,
+        'min_frac': 0.8
+    }
+
+    global_parser = argparse.ArgumentParser(add_help=False)
+    global_parser.add_argument('-V', '--version', default=False, action='store_true', help='Show the application version')
+    global_parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
+    global_parser.add_argument('--cover', default=False, action='store_true', help='Cover existing files')
+    global_parser.add_argument('--log', help='Log file path [OUTDIR/HiFine.log]')
+
+
+    parser = argparse.ArgumentParser(description='HiCBin: a metagenome Hi-C normalization and binning software')
+
+    subparsers = parser.add_subparsers(title='commands', dest='command', description='Valid commands',
+                                       help='choose an analysis stage for further options')
+
+    cmd_pl = subparsers.add_parser('refine', parents=[global_parser],
+                                      description='Normalize contacts and do the binning.')
+
+    cmd_test = subparsers.add_parser('test', parents=[global_parser],
+                                        description='pipeline testing.')
+
+    '''
+    pipeline subparser input
+    '''
+    cmd_pl.add_argument('--min-binsize', type=int,
+                               help='Minimum bin size of shared bins [default: 500000]')
+    cmd_pl.add_argument('--min-complete', type=int,
+                               help='Minimum bin size of relatively complete bins [default: 500000]')
+    cmd_pl.add_argument('--min-frac', type=float,
+                               help='fraction to determine the relatively complete bins [default: 0.8]')
+    cmd_pl.add_argument('--alpha', type=float,
+                               help='hyperparameter in step2 [default: 0.5]')
+    cmd_pl.add_argument('--beta', type=float,
+                               help='hyperparameter in step3 [default: 0.3]')
+    #cmd_pl.add_argument('FASTA', help='Reference fasta sequence')
+    cmd_pl.add_argument('HiC', help='Folder of bins constrcuted by Hi-C data')
+    cmd_pl.add_argument('Shotgun', help='Folder of bins constrcuted by Shotgun data')
+    cmd_pl.add_argument('MAP', help='Contact Map instance [Post_processing.p]')
+    cmd_pl.add_argument('OUTDIR', help='Output directory')
+ 
+
+    args = parser.parse_args()
+
+    if args.version:
+        print(mk_version())
+        sys.exit(0)
+
+    try:
+        make_dir(args.OUTDIR, args.cover)
+    except IOError:
+        print('Error: cannot find out directory or the directory already exists')
+        sys.exit(1)
+
+    logging.captureWarnings(True)
+    logger = logging.getLogger('main')
+
+    # root log listens to everything
+    root = logging.getLogger('')
+    root.setLevel(logging.DEBUG)
+
+    # log message format
+    formatter = logging.Formatter(fmt='%(levelname)-8s | %(asctime)s | %(name)7s | %(message)s')
+
+    # Runtime console listens to INFO by default
+    ch = logging.StreamHandler()
+    if args.verbose:
+        ch.setLevel(logging.DEBUG)
+    else:
+        ch.setLevel(logging.INFO)
+    ch.setFormatter(formatter)
+    root.addHandler(ch)
+
+    # File log listens to all levels from root
+    if args.log is not None:
+        log_path = args.log
+    else:
+        log_path = os.path.join(args.OUTDIR, 'hifine.log')
+    fh = logging.FileHandler(log_path, mode='a')
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    root.addHandler(fh)
+
+    # Add some environmental details
+    logger.debug(mk_version())
+    logger.debug(sys.version.replace('\n', ' '))
+    logger.debug('Command line: {}'.format(' '.join(sys.argv)))
+
+
+    if args.command == 'refine':
+        cl = load_object(args.MAP)
+        map_matrix = cl.seq_map
+        contig_name = cl.name
+        contig_len = cl.len
+
+        TAXAassign_file = 'BEER_ASSIGNMENTS.csv'
+        taxaHeader = pd.read_csv(TAXAassign_file, sep=',', nrows=1)
+        taxaassignMat = pd.read_csv(TAXAassign_file, sep=',', header=None, usecols=range(0, taxaHeader.shape[1]))
+
+        ex_list = list(taxaassignMat[6])
+        ex_list_new = []
+        for i in ex_list:
+            if i != '__Unclassified__':
+                ex_list_new.append(i)
+
+        ##taxassignMat_filter contains contigs that does not contain unclassified contigs in species level.
+        taxaassignMat = taxaassignMat[taxaassignMat[6].isin(ex_list_new)]
+        taxaassignMat = taxaassignMat.values
+
+        ref_tax = {}
+        for i in range(taxaassignMat.shape[0]):
+            ref_tax[taxaassignMat[i , 0]] = taxaassignMat[i , 6]
+
+        ref_len = {}
+        for i in range(contig_name.shape[0]):
+            ref_len[contig_name[i]] = contig_len[i]
+
+        ref_ind = {}
+        for index , contig in enumerate(contig_name):
+            ref_ind[contig] = index
+        
+        logger.info('Hi-C contact matrix contain {} contigs with total length'.format(map_matrix.shape[0] , sum(ref_len.values())))
+        logger.info('Begin Step 1...')
+        # Create a contact map for analysis by HiCzin
+        fs = FindShare(args.HiC,
+                        args.Shotgun,
+                        ref_len,
+                        min_binsize=ifelse(args.min_binsize, runtime_defaults['min_binsize']),
+                        min_frac=ifelse(args.min_frac, runtime_defaults['min_frac']),
+                        min_complete_size=ifelse(args.min_complete, runtime_defaults['min_complete']))
+        gp_shotgun = fs.shotgun_bin
+        gp_hic = fs.hic_bin 
+        gp_share = fs.shared_bin
+        gp_share_plus = fs.shared_bin_plus
+
+        bin_evaluation(gp_shotgun , 'shotgun_bin' , ref_tax , ref_len)
+        bin_evaluation(gp_hic , 'hic_bin' , ref_tax , ref_len)
+        bin_evaluation(gp_share , 'shared_bin' , ref_tax , ref_len)
+        bin_evaluation(gp_share_plus , 'shared_bin_plus' , ref_tax , ref_len)
+
+        ##########Step2 merge fragmented bins#############
+        logger.info('Begin Step 2...')
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.3)
+        bin_evaluation(gp_merge , 'merged_bin_0.3' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.3' , ref_tax , ref_len)
+
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.4)
+        bin_evaluation(gp_merge , 'merged_bin_0.4' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.4' , ref_tax , ref_len)
+        
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.5)
+        bin_evaluation(gp_merge , 'merged_bin_0.5' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.5' , ref_tax , ref_len)
+        
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.6)
+        bin_evaluation(gp_merge , 'merged_bin_0.6' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.6' , ref_tax , ref_len)
+        
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.7)
+        bin_evaluation(gp_merge , 'merged_bin_0.7' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.7' , ref_tax , ref_len)
+        
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.8)
+        bin_evaluation(gp_merge , 'merged_bin_0.8' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.8' , ref_tax , ref_len)
+        
+        gp_merge = merge(gp_share_plus , ref_ind , map_matrix , 0.9)
+        bin_evaluation(gp_merge , 'merged_bin_0.9' , ref_tax , ref_len)
+
+        ##########Step3 assign short contigs##############
+        logger.info('Begin Step 3...')
+        gp_final = assign(gp_merge , map_matrix , ref_ind , ifelse(args.beta , runtime_defaults['beta']))
+        bin_evaluation(gp_final , 'final_bin_0.9' , ref_tax , ref_len)
+
+
+
+
+
