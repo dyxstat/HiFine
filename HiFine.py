@@ -52,8 +52,6 @@ if __name__ == '__main__':
     cmd_pl = subparsers.add_parser('refine', parents=[global_parser],
                                       description='Refine the original bins from shotgun-based and Hi-C based binning methods.')
 
-    cmd_test = subparsers.add_parser('test', parents=[global_parser],
-                                        description='pipeline testing.')
 
     '''
     pipeline subparser input
@@ -70,7 +68,6 @@ if __name__ == '__main__':
                                help='hyperparameter in step3 [default: 0.3]')
     cmd_pl.add_argument('--bin3C', default=False, action='store_true',
                                help='Whether the Hi-C-based binning method is bin3C')
-    #cmd_pl.add_argument('FASTA', help='Reference fasta sequence')
     cmd_pl.add_argument('HiC', help='Folder of bins constrcuted by Hi-C data')
     cmd_pl.add_argument('Shotgun', help='Folder of bins constrcuted by Shotgun data')
     cmd_pl.add_argument('MAP', help='Contact Map instance [HiCzin_normalized_contact.gz]')
