@@ -1,9 +1,9 @@
 #########The structure of the main script is modified from bin3C########
-from Binning_refiner import FindShare,FindShare_bin3C
+from find_share import FindShare,FindShare_bin3C
 from Cluster import ClusterBin,ClusterBin_LC
 from hiczin_contact import HiCzinMap,HiCzinMap_LC
 from utils import load_object,save_object,make_dir,app_path,gen_bins
-from Merge import merge,assign
+from merge_assign import merge,assign
 import logging
 import sys
 import argparse
