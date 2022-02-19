@@ -30,7 +30,7 @@ Two initial binning sets are needed, corresponding to two folders. One folder co
 
 ### Generating metagenomic Hi-C contact maps normalized by HiCzin
 * If you employs [HiCBin](https://github.com/dyxstat/HiCBin) to bin the contigs, you can directly get access to normalized Hi-C contact maps through the file *‘HiCzin\_normalized\_contact.gz’* in the output directory of HiCBin.
-* If you use other Hi-C-based binning methods (i.e. ProxiMeta, [bin3C](https://github.com/cerebis/bin3C), or [MetaTOR](https://github.com/koszullab/metaTOR)), 
+* If you use other Hi-C-based binning methods such as ProxiMeta or [bin3C](https://github.com/cerebis/bin3C), 
 you need to run the [**HiCzin**](https://github.com/dyxstat/HiCzin) software (https://github.com/dyxstat/HiCzin) to generate normalized Hi-C contact maps. The normalized Hi-C contacts and other needed contig information are stored in the
 file *'HiCzin\_normalized\_contact.gz'* from the output directory of HiCzin software.
 
