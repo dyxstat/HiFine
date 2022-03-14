@@ -40,7 +40,7 @@ file *'HiCzin\_normalized\_contact.gz'* from the output directory of HiCzin soft
 ## Usage
 ### Implement the HiFine pipeline 
 ```
-python ./hicfine.py refine [Parameters] HiC_folder Shotgun_folder HiC_contacts Contig_file Output_directory
+python ./hifine.py refine [Parameters] HiC_folder Shotgun_folder HiC_contacts Contig_file Output_directory
 ```
 #### Parameters
 ```
